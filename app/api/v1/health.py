@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import hmac
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -86,7 +87,11 @@ async def metrics(request: Request) -> Response:
         api_key = request.headers.get("X-Admin-API-Key") or request.headers.get(
             "Authorization", ""
         ).removeprefix("Bearer ")
-        if not api_key or api_key != settings.ADMIN_API_KEY:
+        # compare_digest prevents timing attacks that could leak key length/prefix
+        valid = bool(api_key) and hmac.compare_digest(
+            api_key.encode(), settings.ADMIN_API_KEY.encode()
+        )
+        if not valid:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     data = generate_latest()

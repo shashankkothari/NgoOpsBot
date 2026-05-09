@@ -115,7 +115,7 @@ Copy `.env.example` to `.env`. Key variables:
 | `SYNC_DATABASE_URL` | psycopg2 DSN for Alembic migrations |
 | `REDIS_URL` | Redis connection string |
 | `ENCRYPTION_KEY` | Fernet key for encrypting NGO bot tokens |
-| `WEBHOOK_SECRET` | HMAC secret for Telegram webhook verification |
+| `WEBHOOK_SECRET` | Not used at runtime — each NGO's webhook secret is auto-generated and stored in the DB |
 | `ADMIN_API_KEY` | API key protecting admin REST endpoints |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key (platform-level fallback) |
 | `OPENAI_API_KEY` | OpenAI key for Whisper transcription |
@@ -156,7 +156,8 @@ The script will:
 1. Validate the Telegram token format and verify it with the Bot API
 2. Encrypt the token and Anthropic key with your `ENCRYPTION_KEY`
 3. Insert the NGO record into the database
-4. Register the Telegram webhook at `APP_BASE_URL/api/v1/bot/{token}/webhook`
+4. Generate a per-NGO webhook secret and register the Telegram webhook at
+   `APP_BASE_URL/api/v1/webhook/{ngo_slug}/{webhook_secret}`
 
 ---
 
@@ -180,7 +181,7 @@ railway login
 railway link
 railway variables set ENCRYPTION_KEY="$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")"
 railway variables set ADMIN_API_KEY="$(openssl rand -hex 32)"
-railway variables set WEBHOOK_SECRET="$(openssl rand -hex 24)"
+# WEBHOOK_SECRET is not required — per-NGO secrets are auto-generated at onboarding
 # ... set remaining variables
 railway up
 ```

@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import sys
 import urllib.parse
 import uuid
@@ -90,13 +91,22 @@ async def _verify_telegram_token(token: str) -> dict[str, Any]:
     return data["result"]
 
 
-async def _register_webhook(token: str, app_base_url: str, webhook_secret: str) -> None:
-    """Register a Telegram webhook for the given bot token."""
-    webhook_url = f"{app_base_url.rstrip('/')}/api/v1/bot/{token}/webhook"
+async def _register_webhook(
+    token: str, app_base_url: str, ngo_slug: str, webhook_secret: str
+) -> None:
+    """Register a Telegram webhook for the given bot token.
+
+    Webhook URL format matches app/api/v1/webhook.py:
+      /api/v1/webhook/{ngo_slug}/{webhook_secret}
+    The secret is embedded in the path (not a header) — Telegram validates
+    it as an opaque token, which is equivalent to HMAC for this purpose.
+    """
+    webhook_url = (
+        f"{app_base_url.rstrip('/')}/api/v1/webhook/{ngo_slug}/{webhook_secret}"
+    )
     api_url = f"https://api.telegram.org/bot{token}/setWebhook"
     payload = {
         "url": webhook_url,
-        "secret_token": webhook_secret,
         "allowed_updates": [
             "message",
             "callback_query",
@@ -124,30 +134,31 @@ async def _insert_ngo(
     slug: str,
     token_encrypted: bytes,
     anthropic_key_encrypted: bytes,
-    admin_chat_id: int,
-    plan: str,
+    webhook_secret: str,
     timezone_str: str,
 ) -> None:
-    """Insert the NGO record using raw SQL (avoids importing ORM models)."""
+    """Insert the NGO record using raw SQL (avoids importing ORM models).
+
+    Column names match app/models/ngo.py exactly: telegram_bot_token,
+    anthropic_api_key, webhook_secret.
+    """
     await session.execute(
         text(
             """
             INSERT INTO ngos (
                 id, name, slug,
-                telegram_token_encrypted,
-                anthropic_key_encrypted,
-                admin_chat_id,
-                plan,
+                telegram_bot_token,
+                anthropic_api_key,
+                webhook_secret,
                 timezone,
                 is_active,
                 created_at,
                 updated_at
             ) VALUES (
                 :id, :name, :slug,
-                :telegram_token_encrypted,
-                :anthropic_key_encrypted,
-                :admin_chat_id,
-                :plan,
+                :telegram_bot_token,
+                :anthropic_api_key,
+                :webhook_secret,
                 :timezone,
                 true,
                 :now,
@@ -159,10 +170,9 @@ async def _insert_ngo(
             "id": ngo_id,
             "name": name,
             "slug": slug,
-            "telegram_token_encrypted": token_encrypted,
-            "anthropic_key_encrypted": anthropic_key_encrypted,
-            "admin_chat_id": admin_chat_id,
-            "plan": plan,
+            "telegram_bot_token": token_encrypted,
+            "anthropic_api_key": anthropic_key_encrypted,
+            "webhook_secret": webhook_secret,
             "timezone": timezone_str,
             "now": datetime.now(timezone.utc),
         },
@@ -251,6 +261,8 @@ async def main_async(args: argparse.Namespace) -> None:
     anthropic_key_encrypted = fernet.encrypt(args.anthropic_key.encode())
     ngo_id = str(uuid.uuid4())
     slug = _slugify(args.name)
+    # 256-bit CSPRNG secret embedded in the webhook URL path — same approach as admin API
+    webhook_secret = secrets.token_hex(32)
     print(f"          NGO ID    : {ngo_id}")
     print(f"          NGO Slug  : {slug}")
     print(f"          Plan      : {args.plan}")
@@ -279,8 +291,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 slug=slug,
                 token_encrypted=token_encrypted,
                 anthropic_key_encrypted=anthropic_key_encrypted,
-                admin_chat_id=args.admin_chat_id,
-                plan=args.plan,
+                webhook_secret=webhook_secret,
                 timezone_str=args.timezone,
             )
         print(f"          NGO '{args.name}' inserted successfully.")
@@ -292,19 +303,19 @@ async def main_async(args: argparse.Namespace) -> None:
     # 5. Register Telegram webhook
     print("Step 5/5  Registering Telegram webhook...")
     app_base_url = os.environ.get("APP_BASE_URL", "")
-    webhook_secret = os.environ.get("WEBHOOK_SECRET", "")
     if not app_base_url:
         print(
             "WARNING: APP_BASE_URL is not set. Skipping webhook registration.\n"
-            "         Run manually: python -m scripts.create_ngo --register-webhook-only"
+            "         Run manually: POST /api/v1/admin/ngos/{ngo_id}/refresh-webhook"
         )
     else:
         try:
-            await _register_webhook(args.telegram_token, app_base_url, webhook_secret)
+            await _register_webhook(args.telegram_token, app_base_url, slug, webhook_secret)
         except Exception as exc:
             print(f"WARNING: Webhook registration failed: {exc}")
             print(
-                "         The NGO is in the database. Register the webhook manually later."
+                "         The NGO is in the database. Register the webhook manually later\n"
+                "         via: POST /api/v1/admin/ngos/{ngo_id}/refresh-webhook"
             )
 
     # Summary
