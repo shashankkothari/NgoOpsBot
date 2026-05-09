@@ -1,0 +1,156 @@
+version: "3.9"
+
+# =============================================================================
+# NGO OpsBot — docker-compose (local development)
+# Services: app (FastAPI), postgres, redis
+# =============================================================================
+
+x-common-env: &common-env
+  DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ngoopsbot
+  SYNC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/ngoopsbot
+  REDIS_URL: redis://redis:6379/0
+  ENV: development
+  DEBUG: "true"
+  LOG_LEVEL: DEBUG
+
+services:
+  # ---------------------------------------------------------------------------
+  # FastAPI application
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: final
+    image: ngo-opsbot:dev
+    container_name: ngoopsbot_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+      # Override from .env file if present
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-webhook-secret}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8000}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL:-noreply@example.com}
+      MSG91_API_KEY: ${MSG91_API_KEY:-}
+      MSG91_SENDER_ID: ${MSG91_SENDER_ID:-NGOBOT}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    volumes:
+      # Mount source for hot-reload in development
+      - .:/app
+      # Prevent venv from being overwritten by host mount
+      - /app/.venv
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --log-level debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - ngoopsbot_net
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ngoopsbot_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ngoopsbot
+      # Performance tuning for development
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/db_init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ngoopsbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ngoopsbot_net
+
+  # ---------------------------------------------------------------------------
+  # Redis 7
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ngoopsbot_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+      --loglevel notice
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - ngoopsbot_net
+
+  # ---------------------------------------------------------------------------
+  # Alembic migration runner (runs once then exits)
+  # ---------------------------------------------------------------------------
+  migrate:
+    image: ngo-opsbot:dev
+    container_name: ngoopsbot_migrate
+    environment:
+      <<: *common-env
+    command: alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ngoopsbot_net
+    profiles:
+      - migrate    # Only runs when: docker compose --profile migrate up migrate
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  ngoopsbot_net:
+    driver: bridge

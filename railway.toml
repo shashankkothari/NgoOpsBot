@@ -1,0 +1,46 @@
+# =============================================================================
+# NGO OpsBot — Railway deployment configuration
+# Docs: https://docs.railway.app/reference/config-as-code
+# =============================================================================
+
+[build]
+# Railway auto-detects Python via Nixpacks; pip install -e . makes the
+# 'app' package importable and installs all pyproject.toml dependencies.
+builder = "NIXPACKS"
+buildCommand = "pip install -e ."
+
+[deploy]
+# Railway injects $PORT automatically; we bind to 0.0.0.0 so it's reachable.
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+
+# Run Alembic migrations before every new deployment goes live.
+# If this command fails the deploy is aborted — safe for production.
+# Railway docs: https://docs.railway.app/guides/release-phase
+releaseCommand = "alembic upgrade head"
+
+# Keep at least one instance running (zero-downtime deploys)
+numReplicas = 1
+
+# Graceful shutdown timeout (seconds) — lets in-flight requests finish
+sleepApplication = false
+
+# Health check — Railway will restart the service if this fails
+[deploy.healthcheck]
+path = "/health"
+timeout = 10
+
+# ---------------------------------------------------------------------------
+# Environment groups (optional — link via Railway dashboard)
+# All secrets should be set as Railway environment variables, not here.
+# ---------------------------------------------------------------------------
+# [environments.production]
+# Variables are managed via Railway dashboard or `railway variables set`
+
+# ---------------------------------------------------------------------------
+# Cron jobs (Railway native cron — alternative to APScheduler for simple tasks)
+# Uncomment and adjust if you prefer Railway-managed cron over in-process APScheduler
+# ---------------------------------------------------------------------------
+# [[cronjobs]]
+# name = "daily-report"
+# schedule = "0 6 * * *"          # 06:00 UTC every day
+# command = "python -m scripts.daily_report"
