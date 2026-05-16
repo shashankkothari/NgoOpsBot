@@ -1,31 +1,57 @@
 # NGO OpsBot
 
-A multi-tenant SaaS Telegram bot platform that helps NGOs automate internal operations — task management, volunteer coordination, donor communication, meeting transcription, and reporting — powered by Anthropic Claude AI.
+A multi-tenant SaaS platform that gives NGOs an AI-powered operations team — accessible via Telegram bot and a dedicated staff web portal. Powered by Anthropic Claude with real tool access: Google Sheets, Gmail, Calendar, web search, and safe arithmetic.
 
 ---
 
-## Architecture Overview
+## What it does
+
+Staff message their NGO's Telegram bot (or use the web portal) and get routed to a specialist AI agent:
+
+| Agent | Handles |
+|---|---|
+| **Fundraising** | Donor tracking, grant management, 80G receipts, FCRA compliance, re-engagement drafts |
+| **Finance** | Budget vs actuals, expense categorisation, TDS guidance, board reports |
+| **HR** | Leave tracking, offer letters, volunteer coordination, Indian labour law |
+| **Marketing** | Campaign planning, social content, impact stories, donor communications |
+| **Compliance** | FCRA filings, 12A/80G renewals, ITR-7, audit timelines, regulatory lookups |
+| **General** | Intent classifier — routes to the right specialist automatically |
+
+Agents can take real actions: read/write Google Sheets, search Gmail, create calendar events, draft emails, and run financial calculations — with a tool-use loop that handles multi-step tasks autonomously.
+
+---
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Telegram Clients (per-NGO bots)                                │
-└────────────────────────┬────────────────────────────────────────┘
-                         │ HTTPS webhook per bot token
-┌────────────────────────▼────────────────────────────────────────┐
-│  FastAPI (app/)                                                  │
-│  ├── api/v1/        REST endpoints (admin, integrations, health) │
-│  ├── bot/handlers/  Telegram update handlers (per-tenant)        │
-│  ├── agents/        Claude-powered AI agents                     │
-│  ├── scheduler/     APScheduler jobs (reminders, reports)        │
-│  ├── integrations/  Google Workspace, SendGrid, MSG91            │
-│  └── comms/         Email + SMS dispatch layer                   │
-└───────┬──────────────────────┬──────────────────────────────────┘
-        │                      │
-┌───────▼──────┐     ┌─────────▼─────────┐
-│  PostgreSQL  │     │   Redis            │
-│  (SQLAlchemy │     │   (cache, rate     │
-│  + Alembic)  │     │   limit, sessions) │
-└──────────────┘     └───────────────────┘
+┌──────────────────────┐   ┌──────────────────────────┐
+│  Telegram Bot        │   │  Staff Portal (Next.js)  │
+│  (per-NGO webhook)   │   │  staff-portal/           │
+└──────────┬───────────┘   └────────────┬─────────────┘
+           │                            │ JWT auth
+           │ HTTPS webhook              │ /api/v1/staff/*
+┌──────────▼────────────────────────────▼─────────────┐
+│  FastAPI Backend (app/)                              │
+│  ├── api/v1/admin/    Admin REST API                 │
+│  ├── api/v1/staff/    Staff portal API (JWT)         │
+│  ├── bot/handlers/    Telegram update handlers       │
+│  ├── agents/          Claude specialist agents       │
+│  │   └── tools/       Calculator, web search,        │
+│  │                    Gmail, Calendar, Sheets         │
+│  ├── integrations/    Google Workspace               │
+│  └── scheduler/       APScheduler (reminders)        │
+└────────┬────────────────────┬────────────────────────┘
+         │                    │
+┌────────▼───────┐   ┌────────▼───────┐
+│  PostgreSQL    │   │  Redis         │
+│  (async ORM)   │   │  (cache)       │
+└────────────────┘   └────────────────┘
+
+┌─────────────────────────────────┐
+│  Admin Dashboard (Next.js)      │
+│  dashboard/   — manage NGOs,    │
+│  agents, staff, and settings    │
+└─────────────────────────────────┘
 ```
 
 ---
@@ -38,25 +64,26 @@ A multi-tenant SaaS Telegram bot platform that helps NGOs automate internal oper
 | Telegram | python-telegram-bot v20+ (webhook mode) |
 | Database | PostgreSQL 16 + SQLAlchemy 2 async + Alembic |
 | Cache | Redis 7 |
-| AI | Anthropic Claude API |
+| AI | Anthropic Claude (claude-sonnet-4-6 with tool use) |
 | Voice transcription | OpenAI Whisper API |
 | Scheduler | APScheduler 3.x |
 | Email | SendGrid |
 | SMS / WhatsApp | MSG91 |
-| Google APIs | google-api-python-client |
-| Admin dashboard | Next.js + Tailwind (in `/dashboard`) |
+| Google APIs | Sheets, Gmail, Calendar, Drive |
+| Staff portal | Next.js + Tailwind (`/staff-portal`) |
+| Admin dashboard | Next.js + Tailwind (`/dashboard`) |
 | Hosting | Railway.app |
-| Observability | Sentry + structlog |
+| Observability | Sentry + structlog + Prometheus |
 
 ---
 
-## Local Development Setup
+## Local Development
 
 ### Prerequisites
 
 - Python 3.12+
+- Node.js 20+
 - Docker & Docker Compose
-- `git`
 
 ### 1. Clone and configure
 
@@ -64,44 +91,40 @@ A multi-tenant SaaS Telegram bot platform that helps NGOs automate internal oper
 git clone https://github.com/your-org/ngo-opsbot.git
 cd ngo-opsbot
 cp .env.example .env
-# Edit .env and fill in real values (see Environment Variables below)
+# Fill in values — see Environment Variables below
 ```
 
-### 2. Create a virtual environment and install dependencies
+### 2. Python backend
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-```
 
-### 3. Start infrastructure (PostgreSQL + Redis)
-
-```bash
 docker compose up postgres redis -d
-```
-
-### 4. Run database migrations
-
-```bash
 alembic upgrade head
-```
-
-### 5. Start the development server
-
-```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-The API will be available at `http://localhost:8000`.  
-Interactive docs: `http://localhost:8000/docs`
+API: `http://localhost:8000` · Docs: `http://localhost:8000/docs`
 
-### 6. (Optional) Run the full stack via Docker Compose
+### 3. Admin dashboard
 
 ```bash
-# Build and start everything, including migrations
-docker compose --profile migrate up --build
+cd dashboard
+npm install
+npm run dev        # http://localhost:3001
 ```
+
+### 4. Staff portal
+
+```bash
+cd staff-portal
+npm install
+npm run dev        # http://localhost:3002
+```
+
+Staff log in with Google OAuth scoped to their NGO slug (set via cookie before the OAuth flow). The portal connects to the FastAPI backend via JWT tokens issued on sign-in.
 
 ---
 
@@ -114,28 +137,71 @@ Copy `.env.example` to `.env`. Key variables:
 | `DATABASE_URL` | asyncpg DSN (`postgresql+asyncpg://...`) |
 | `SYNC_DATABASE_URL` | psycopg2 DSN for Alembic migrations |
 | `REDIS_URL` | Redis connection string |
-| `ENCRYPTION_KEY` | Fernet key for encrypting NGO bot tokens |
-| `WEBHOOK_SECRET` | Not used at runtime — each NGO's webhook secret is auto-generated and stored in the DB |
-| `ADMIN_API_KEY` | API key protecting admin REST endpoints |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API key (platform-level fallback) |
+| `ENCRYPTION_KEY` | Fernet key for encrypting secrets at rest |
+| `ADMIN_API_KEY` | Key protecting admin REST endpoints |
+| `STAFF_JWT_SECRET` | Secret for signing staff portal JWT tokens |
+| `ANTHROPIC_API_KEY` | Platform-level Claude API key (NGO key overrides per-request) |
 | `OPENAI_API_KEY` | OpenAI key for Whisper transcription |
 | `SENDGRID_API_KEY` | SendGrid email API key |
-| `MSG91_API_KEY` | MSG91 SMS/WhatsApp API key |
 | `GOOGLE_CLIENT_ID` | Google OAuth 2.0 client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 client secret |
+| `GOOGLE_REDIRECT_URI` | OAuth callback URL |
+| `NEXTAUTH_SECRET` | NextAuth secret (staff portal) |
+| `NEXTAUTH_URL` | Staff portal public URL |
 | `SENTRY_DSN` | Sentry error tracking DSN |
-| `APP_BASE_URL` | Public HTTPS URL (used for webhook registration) |
+| `APP_BASE_URL` | Public HTTPS URL (for webhook registration) |
 
-Generate an ENCRYPTION_KEY:
+Generate keys:
 ```bash
+# Fernet encryption key
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Random API / JWT keys
+openssl rand -hex 32
 ```
+
+---
+
+## Agent Tools
+
+Each agent can use a curated set of tools — Claude calls them automatically during a conversation:
+
+| Tool | What it does | Agents |
+|---|---|---|
+| `calculator` | Safe AST-evaluated arithmetic (no `eval`) | All |
+| `web_search` | DuckDuckGo search, no API key needed | All |
+| `read_sheet_tab` | Read rows from NGO's Google Sheets Master Tracker | Fundraising, Finance, HR, Compliance |
+| `append_sheet_row` | Add a new row to a tab | Fundraising, Finance, HR |
+| `find_and_update_sheet_row` | Find by column value and update fields | Fundraising, Finance, HR |
+| `search_emails` | Search NGO Gmail by query string | Fundraising, HR, Marketing |
+| `get_email` | Fetch full email content by message ID | Fundraising, HR, Marketing |
+| `create_email_draft` | Save to Gmail Drafts (never sends) | Fundraising, HR, Marketing |
+| `list_calendar_events` | List upcoming Calendar events | Compliance, General |
+| `create_calendar_event` | Create a Calendar event or deadline reminder | Compliance, General |
+
+Google-dependent tools require the NGO to complete the OAuth flow from the admin dashboard. Tools fail gracefully with a descriptive message if Google isn't connected.
+
+---
+
+## Google Sheets Master Tracker
+
+Each connected NGO gets a single spreadsheet with five tabs, created automatically on first connection:
+
+| Tab | Columns |
+|---|---|
+| **Donors** | Name, Email, Phone, Last Gift Date, Last Gift Amount, Total Given, Status, Notes |
+| **Grants** | Grant Name, Funder, Amount, Status, Application Date, Decision Date, Reporting Deadline, Utilization %, Notes |
+| **Finance** | Month, Category, Budget, Actual, Variance, Notes |
+| **Staff** | Name, Role, Join Date, Leave Balance, Phone, Email, Status |
+| **Reminders** | Title, Type, Due Date, Status, Assigned To, Notes |
 
 ---
 
 ## Onboarding a New NGO
 
-Use the bundled CLI script to create a new tenant:
+**Via admin dashboard** (`/dashboard`): Create NGO → configure agents and settings → set Anthropic API key → connect Google account.
+
+**Via CLI** (scripted onboarding):
 
 ```bash
 python -m scripts.create_ngo \
@@ -147,99 +213,58 @@ python -m scripts.create_ngo \
   --timezone "Asia/Kolkata"
 ```
 
-Flags:
-- `--dry-run` — validate inputs without writing to DB or registering webhook
-- `--plan` — `starter` | `growth` | `enterprise`
-- `--timezone` — IANA timezone string (default `UTC`)
+The script validates the token, encrypts secrets, creates the DB record, and registers the Telegram webhook automatically.
 
-The script will:
-1. Validate the Telegram token format and verify it with the Bot API
-2. Encrypt the token and Anthropic key with your `ENCRYPTION_KEY`
-3. Insert the NGO record into the database
-4. Generate a per-NGO webhook secret and register the Telegram webhook at
-   `APP_BASE_URL/api/v1/webhook/{ngo_slug}/{webhook_secret}`
+---
+
+## Staff Portal
+
+The staff portal (`/staff-portal`) is a Next.js app for NGO staff who prefer a web interface over Telegram.
+
+- **Chat**: per-agent conversations with persistent thread history
+- **Reminders**: create, snooze, and acknowledge reminders
+- **Support tickets**: submit issues to admins with priority and category
+
+Staff authenticate via Google OAuth. On sign-in the portal calls `POST /api/v1/staff/auth/login`, which validates the Google email against the NGO's staff list and issues a short-lived JWT.
 
 ---
 
 ## Railway Deployment
 
-### First deploy
-
-1. Create a new Railway project and link this repo.
-2. Add a PostgreSQL plugin and a Redis plugin from the Railway dashboard.
-3. Set all environment variables from `.env.example` in Railway's variable editor.
-4. Railway reads `railway.toml` automatically — it will:
-   - Install dependencies with `pip install -e .`
-   - Run `alembic upgrade head` as the release command
-   - Start the server with `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-
-### Environment variables on Railway
+1. Create a Railway project and add PostgreSQL + Redis plugins.
+2. Set all env vars from `.env.example`.
+3. Railway reads `railway.toml` — it runs `alembic upgrade head` as the release command then starts uvicorn.
 
 ```bash
-# Using Railway CLI
-railway login
-railway link
+railway login && railway link
 railway variables set ENCRYPTION_KEY="$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")"
 railway variables set ADMIN_API_KEY="$(openssl rand -hex 32)"
-# WEBHOOK_SECRET is not required — per-NGO secrets are auto-generated at onboarding
-# ... set remaining variables
+railway variables set STAFF_JWT_SECRET="$(openssl rand -hex 32)"
 railway up
 ```
 
-### Subsequent deploys
-
-Push to your main branch — Railway auto-deploys and runs `alembic upgrade head` before swapping traffic.
-
----
-
-## Telegram Bot Setup (per NGO)
-
-1. Message [@BotFather](https://t.me/BotFather) on Telegram.
-2. Send `/newbot` and follow the prompts to get a bot token.
-3. Enable inline mode: `/setinline` → choose your bot → set placeholder text.
-4. Set bot commands: `/setcommands` → paste the contents of `scripts/bot_commands.txt`.
-5. Run the onboarding script (see above) with the token.
-6. The webhook is automatically registered — no polling needed.
+Push to `main` for auto-deploys thereafter.
 
 ---
 
 ## Running Tests
 
 ```bash
-# Unit + integration tests with coverage
-pytest
-
-# Run only unit tests
-pytest tests/unit/
-
-# Run with verbose output and no coverage
-pytest -v --no-cov
-
-# Run a specific test file
-pytest tests/unit/test_encryption.py -v
+pytest                          # all tests with coverage
+pytest tests/unit/             # unit tests only (no DB needed)
+pytest tests/integration/      # requires TEST_DATABASE_URL
+pytest -v --no-cov             # verbose, skip coverage
 ```
-
-Tests use an in-memory SQLite database by default. Set `TEST_DATABASE_URL` to a real PostgreSQL DSN for integration tests.
 
 ---
 
 ## Database Migrations
 
 ```bash
-# Create a new migration (after changing models)
-alembic revision --autogenerate -m "add volunteer table"
-
-# Apply all pending migrations
+alembic revision --autogenerate -m "describe change"
 alembic upgrade head
-
-# Roll back the last migration
 alembic downgrade -1
-
-# Show current revision
 alembic current
-
-# Show migration history
-alembic history --verbose
 ```
 
 ---
@@ -249,47 +274,41 @@ alembic history --verbose
 ```
 ngo-opsbot/
 ├── app/
-│   ├── main.py                  # FastAPI app factory
-│   ├── core/                    # Config, DB engine, security utils
+│   ├── main.py
+│   ├── core/                    # Config, DB, security, staff auth
 │   ├── models/                  # SQLAlchemy ORM models
-│   ├── schemas/                 # Pydantic request/response schemas
-│   ├── api/v1/                  # REST API routers
-│   ├── bot/
-│   │   └── handlers/            # Telegram update handlers
+│   ├── schemas/                 # Pydantic schemas
+│   ├── api/v1/
+│   │   ├── admin/               # Admin REST API
+│   │   └── staff/               # Staff portal API (JWT)
+│   ├── bot/handlers/            # Telegram update handlers
 │   ├── agents/
-│   │   └── prompts/templates/   # Claude prompt templates (Jinja2)
+│   │   ├── base.py              # Tool-use loop, prompt caching
+│   │   ├── fundraising.py
+│   │   ├── finance.py
+│   │   ├── hr.py
+│   │   ├── marketing.py
+│   │   ├── compliance.py
+│   │   ├── general.py           # Intent classifier + orchestrator
+│   │   ├── tools/               # Calculator, web search, executor
+│   │   └── prompts/             # System prompt builder (3 layers)
 │   ├── integrations/
-│   │   └── google/              # Google Workspace integration
-│   ├── scheduler/jobs/          # APScheduler job definitions
-│   └── comms/                   # Email (SendGrid) + SMS (MSG91)
-├── alembic/
-│   ├── env.py                   # Async-compatible Alembic env
-│   ├── script.py.mako           # Migration file template
-│   └── versions/                # Migration files (auto-generated)
+│   │   └── google/              # Sheets, Gmail, Calendar, Drive, OAuth
+│   └── scheduler/               # APScheduler reminder jobs
+├── alembic/versions/            # DB migrations
 ├── dashboard/                   # Next.js admin dashboard
+├── staff-portal/                # Next.js staff-facing portal
 ├── tests/
-│   ├── conftest.py              # Shared pytest fixtures
-│   ├── unit/                    # Fast, isolated unit tests
-│   └── integration/             # Tests against real DB/Redis
+│   ├── unit/
+│   └── integration/
 ├── scripts/
-│   └── create_ngo.py            # NGO onboarding CLI
-├── Dockerfile                   # Multi-stage production image
-├── docker-compose.yml           # Local development stack
-├── railway.toml                 # Railway deployment config
-├── alembic.ini                  # Alembic CLI config
-└── pyproject.toml               # Python project + tool config
+│   ├── create_ngo.py
+│   └── smoke_test.sh
+├── Dockerfile
+├── docker-compose.yml
+├── railway.toml
+└── pyproject.toml
 ```
-
----
-
-## Contributing
-
-1. Fork the repository and create a feature branch.
-2. Install dev dependencies: `pip install -e ".[dev]"`
-3. Install pre-commit hooks: `pre-commit install`
-4. Write tests for new functionality.
-5. Run `ruff check . && ruff format .` before committing.
-6. Open a pull request against `main`.
 
 ---
 
