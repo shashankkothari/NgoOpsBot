@@ -6,7 +6,7 @@ import { Send, Loader2, RotateCcw } from "lucide-react";
 import { AppShell } from "@/app/components/layout/AppShell";
 import { staffApi } from "@/app/lib/api";
 import { cn, relativeTime } from "@/app/lib/utils";
-import { type AgentType, AGENT_ICONS, AGENT_LABELS } from "@/app/lib/types";
+import { type AgentType, AGENT_ICONS, AGENT_LABELS, SYSTEM_AGENTS } from "@/app/lib/types";
 
 interface Message {
   id: string;
@@ -18,7 +18,9 @@ interface Message {
 export default function ChatPage() {
   const { data: session } = useSession();
   const allowedAgents = (session?.staffProfile?.allowed_agents ?? []) as AgentType[];
-  const firstAgent = allowedAgents[0] ?? null;
+  // System agents (helper) are always available regardless of allowed_agents
+  const allAccessibleAgents = [...new Set([...allowedAgents, ...SYSTEM_AGENTS])];
+  const firstAgent = allowedAgents[0] ?? (SYSTEM_AGENTS[0] as AgentType) ?? null;
 
   const [activeAgent, setActiveAgent] = useState<AgentType | null>(firstAgent);
   // Per-agent message history and thread IDs so switching agents preserves each conversation.

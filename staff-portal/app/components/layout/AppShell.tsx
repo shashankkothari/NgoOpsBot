@@ -13,7 +13,7 @@ import {
   Bot,
 } from "lucide-react";
 import { cn } from "@/app/lib/utils";
-import { ALL_AGENTS, AGENT_ICONS, AGENT_LABELS, type AgentType } from "@/app/lib/types";
+import { ALL_AGENTS, SYSTEM_AGENTS, AGENT_ICONS, AGENT_LABELS, type AgentType } from "@/app/lib/types";
 
 const NAV_ITEMS = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
@@ -110,6 +110,27 @@ export function AppShell({
               );
             })}
           </div>
+
+          {/* Platform Help — always available, pinned above the profile strip */}
+          <div className="border-t border-slate-100 py-2">
+            {SYSTEM_AGENTS.map((agent) => (
+              <button
+                key={agent}
+                onClick={() => onAgentSelect?.(agent)}
+                title="Ask questions about using this platform"
+                className={cn(
+                  "w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors text-left",
+                  activeAgent === agent
+                    ? "bg-amber-50 text-amber-700 font-medium"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                )}
+              >
+                <span className="text-base">{AGENT_ICONS[agent]}</span>
+                <span>{AGENT_LABELS[agent]}</span>
+              </button>
+            ))}
+          </div>
+
           {/* Profile strip */}
           <div className="border-t border-slate-100 px-4 py-3">
             <p className="text-xs font-medium text-slate-700 truncate">

@@ -398,6 +398,7 @@ AGENT_TOOLS: dict[str, list[str]] = {
         "create_calendar_event",
     ],
     "general": list(ALL_TOOL_DEFINITIONS.keys()),  # all tools
+    "helper": [],  # no tools — purely conversational, works before Google is connected
     "comms": [
         "calculator",
         "web_search",

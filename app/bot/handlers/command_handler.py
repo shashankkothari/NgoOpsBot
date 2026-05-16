@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Optional
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.ngo_bot_registry import bot_registry
 from app.core.logging import get_logger
@@ -38,7 +39,7 @@ async def handle_command(
     ngo: NGO,
     staff: Optional[Staff],
     ngo_settings: list[NGOSettings],
-    db: object,  # AsyncSession — typed as object to avoid circular import at module level
+    db: AsyncSession,
 ) -> None:
     """
     Route slash commands to their handlers.
@@ -58,7 +59,7 @@ async def handle_command(
     )
 
     if command == "help":
-        await _handle_help(parsed, ngo, staff, ngo_settings, bound_log)
+        await _handle_help(parsed, ngo, staff, ngo_settings, db, bound_log)
 
     elif command == "status":
         await _handle_status(parsed, ngo, ngo_settings, bound_log)
@@ -79,42 +80,97 @@ async def _handle_help(
     ngo: NGO,
     staff: Optional[Staff],
     ngo_settings: list[NGOSettings],
+    db: AsyncSession,
     bound_log: structlog.stdlib.BoundLogger,
 ) -> None:
-    """List agents this staff member can use."""
+    """Open a conversation with the Helper agent.
+
+    If the command includes a question (e.g. /help how do I track a grant?)
+    it is passed directly to the helper. A bare /help sends a greeting prompt
+    so the helper introduces itself and offers to assist.
+    """
     if staff is None:
         await bot_registry.send_message(
             ngo.slug,
             parsed.chat_id,
             "You are not registered in this NGO's system. Please ask your admin to add you.",
-            parse_mode="HTML",
         )
         return
 
-    enabled_agents = {s.agent_name for s in ngo_settings if s.is_enabled}
-    # Empty allowed_agents means all-access (admins typically)
-    permitted = set(staff.allowed_agents) if staff.allowed_agents else enabled_agents
-
-    accessible = enabled_agents & permitted
-    if not accessible:
-        await bot_registry.send_message(
-            ngo.slug,
-            parsed.chat_id,
-            "You don't currently have access to any agents. Contact your admin.",
-        )
-        return
-
-    lines = ["<b>Available Agents</b>\n"]
-    for agent in sorted(accessible):
-        desc = _AGENT_DESCRIPTIONS.get(agent, "")
-        lines.append(f"• <b>{agent.capitalize()}</b> — {desc}")
-    lines.append(
-        "\n<i>Mention me and describe your task, e.g.:</i>\n"
-        "<code>@bot Help me write a donor update email</code>"
+    # If the user typed "/help <question>", pass it directly; otherwise use a greeting
+    question = (parsed.command_args or "").strip()
+    user_message = question if question else (
+        "Hi! I'm new to NGO OpsBot. Can you give me a quick overview of what I can do here?"
     )
 
-    await bot_registry.send_message(ngo.slug, parsed.chat_id, "\n".join(lines), parse_mode="HTML")
-    bound_log.info("command_help_sent", accessible_agents=list(accessible))
+    # Send a "thinking" indicator so the staff member knows something is happening
+    await bot_registry.send_message(ngo.slug, parsed.chat_id, "🤔 Let me help with that...")
+
+    try:
+        from app.agents.dispatcher import dispatch
+        from app.bot.conversation_store import get_conversation_history, save_conversation_turn
+        from app.core.cache import get_redis
+
+        redis_client = await get_redis()
+        history = await get_conversation_history(
+            ngo_id=ngo.id,
+            staff_id=staff.id,
+            agent_name="helper",
+            db=db,
+        )
+
+        response = await dispatch(
+            agent_name="helper",
+            user_message=user_message,
+            ngo=ngo,
+            staff=staff,
+            conversation_history=history,
+            ngo_settings=ngo_settings,
+            db=db,
+            redis_client=redis_client,
+        )
+
+        # Persist the conversation turn
+        await save_conversation_turn(
+            ngo_id=ngo.id, staff_id=staff.id, agent_name="helper",
+            role="user", content=user_message,
+            telegram_message_id=parsed.message_id or 0,
+            chat_id=parsed.chat_id, tokens_used=None, language_detected=None, db=db,
+        )
+        await save_conversation_turn(
+            ngo_id=ngo.id, staff_id=staff.id, agent_name="helper",
+            role="assistant", content=response.text,
+            telegram_message_id=0, chat_id=parsed.chat_id,
+            tokens_used=response.input_tokens + response.output_tokens,
+            language_detected=response.language_detected, db=db,
+        )
+
+        # Split long responses across multiple Telegram messages
+        text = response.text
+        chunk_size = 4096
+        for i in range(0, len(text), chunk_size):
+            await bot_registry.send_message(ngo.slug, parsed.chat_id, text[i:i + chunk_size])
+
+        bound_log.info("command_help_sent", via_helper_agent=True)
+
+    except Exception as exc:
+        bound_log.error("command_help_agent_failed", error=str(exc))
+        # Fallback to the static list if the agent call fails
+        enabled_agents = {s.agent_name for s in ngo_settings if s.is_enabled}
+        permitted = set(staff.allowed_agents) if staff.allowed_agents else enabled_agents
+        accessible = enabled_agents & permitted
+
+        lines = ["<b>Available Agents</b>\n"]
+        for agent in sorted(accessible):
+            desc = _AGENT_DESCRIPTIONS.get(agent, "")
+            lines.append(f"• <b>{agent.capitalize()}</b> — {desc}")
+        lines.append(
+            "\n<i>Mention me and describe your task, e.g.:</i>\n"
+            "<code>@bot Help me write a donor update email</code>"
+        )
+        await bot_registry.send_message(
+            ngo.slug, parsed.chat_id, "\n".join(lines), parse_mode="HTML"
+        )
 
 
 async def _handle_status(

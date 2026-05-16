@@ -28,6 +28,10 @@ logger = get_logger(__name__)
 # Maps agent_name → agent class; populated by @register_agent at import time.
 AGENT_REGISTRY: dict[str, type[BaseAgent]] = {}
 
+# System agents are always enabled and always permitted to all staff.
+# They bypass NGO settings checks and staff permission checks.
+SYSTEM_AGENTS: frozenset[str] = frozenset({"general", "helper"})
+
 
 def register_agent(cls: type[BaseAgent]) -> type[BaseAgent]:
     """Class decorator that auto-registers an agent in AGENT_REGISTRY."""
@@ -95,8 +99,8 @@ async def dispatch(
         )
 
     # -- 2. NGO-level enablement check --
-    # "general" has no NGOSettings row — it's a system agent, always enabled.
-    if agent_name != "general":
+    # System agents (general, helper) are always enabled — no NGOSettings row needed.
+    if agent_name not in SYSTEM_AGENTS:
         setting = next(
             (s for s in ngo_settings if s.agent_name == agent_name), None
         )
@@ -106,9 +110,9 @@ async def dispatch(
             )
 
     # -- 3. Staff permission check --
-    # "general" is a system-level orchestrator — always permitted.
+    # System agents (general, helper) are always permitted to all staff.
     # For specialist agents: allowed_agents=[] (or None) means all-access.
-    if agent_name != "general" and staff.allowed_agents and agent_name not in staff.allowed_agents:
+    if agent_name not in SYSTEM_AGENTS and staff.allowed_agents and agent_name not in staff.allowed_agents:
         raise AgentNotPermittedError(
             f"Staff member '{staff.name}' is not permitted to use agent '{agent_name}'"
         )
@@ -143,6 +147,7 @@ def _ensure_agents_imported() -> None:
         "app.agents.hr",
         "app.agents.compliance",
         "app.agents.general",
+        "app.agents.helper",
     ]
     for module_path in _agent_modules:
         try:
