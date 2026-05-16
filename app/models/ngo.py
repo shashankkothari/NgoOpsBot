@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from app.models.conversation import Conversation, ConversationThread
     from app.models.reminder import Reminder, ReminderLog
     from app.models.audit import AuditLog
+    from app.models.support import SupportTicket
 
 
 class NGO(UUIDMixin, TimestampMixin, Base):
@@ -113,6 +114,9 @@ class NGO(UUIDMixin, TimestampMixin, Base):
     )
     audit_logs: Mapped[list[AuditLog]] = relationship(
         "AuditLog", back_populates="ngo", cascade="all, delete-orphan"
+    )
+    support_tickets: Mapped[list[SupportTicket]] = relationship(
+        "SupportTicket", back_populates="ngo", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

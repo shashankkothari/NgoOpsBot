@@ -8,6 +8,7 @@ other modules so the lru_cache singleton is honoured and tests can override.
 from __future__ import annotations
 
 import base64
+import sys
 from functools import lru_cache
 from typing import Literal
 
@@ -53,6 +54,7 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: str = ""  # HMAC secret embedded in Telegram webhook URL
     ADMIN_API_KEY: str = ""   # Bearer token for /api/v1/admin/* routes
     SECRET_KEY: str = "change-me"
+    STAFF_JWT_SECRET: str = "change-me-staff"  # HS256 secret for staff JWT tokens
 
     # ---------------------------------------------------------------------- #
     # AI — platform-level fallbacks; NGOs override with their own keys        #
@@ -150,6 +152,49 @@ class Settings(BaseSettings):
                 f"ENCRYPTION_KEY decoded to {len(decoded)} bytes; Fernet requires exactly 32."
             )
         return v
+
+    @model_validator(mode="after")
+    def _validate_required_vars(self) -> "Settings":
+        """Check that vars required in every environment are set and non-empty.
+
+        Prints a clear, human-readable error listing exactly which variables
+        are missing before crashing, so developers get actionable feedback
+        instead of a cryptic SQLAlchemy or Redis connection error later.
+        """
+        _REQUIRED: list[tuple[str, str]] = [
+            ("DATABASE_URL", self.DATABASE_URL),
+            ("REDIS_URL", self.REDIS_URL),
+            ("ENCRYPTION_KEY", self.ENCRYPTION_KEY),
+            ("ADMIN_API_KEY", self.ADMIN_API_KEY),
+            ("SECRET_KEY", self.SECRET_KEY),
+        ]
+
+        missing = [name for name, value in _REQUIRED if not value]
+
+        if missing:
+            lines = [
+                "",
+                "=" * 60,
+                "STARTUP ERROR: Required environment variables are missing.",
+                "=" * 60,
+                "The following variables must be set in .env or the shell:",
+                "",
+            ]
+            for name in missing:
+                lines.append(f"  - {name}")
+            lines += [
+                "",
+                "Copy .env.example to .env and fill in the missing values.",
+                "=" * 60,
+                "",
+            ]
+            print("\n".join(lines), file=sys.stderr)
+            raise ValueError(
+                f"Missing required environment variables: {', '.join(missing)}. "
+                "See stderr for details."
+            )
+
+        return self
 
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":

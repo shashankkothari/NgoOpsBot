@@ -12,6 +12,7 @@ from app.models.staff import Staff  # noqa: F401
 from app.models.conversation import Conversation, ConversationThread  # noqa: F401
 from app.models.reminder import Reminder, ReminderLog  # noqa: F401
 from app.models.audit import AuditLog  # noqa: F401
+from app.models.support import SupportTicket  # noqa: F401
 
 __all__ = [
     "Base",
@@ -25,4 +26,5 @@ __all__ = [
     "Reminder",
     "ReminderLog",
     "AuditLog",
+    "SupportTicket",
 ]

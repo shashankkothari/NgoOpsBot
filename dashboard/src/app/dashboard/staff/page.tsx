@@ -61,7 +61,7 @@ export default function StaffPage() {
     (s) =>
       !search ||
       s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.telegram_id.includes(search)
+      String(s.telegram_user_id).includes(search)
   );
 
   const handleToggleActive = async (staff: Staff) => {
@@ -164,7 +164,7 @@ export default function StaffPage() {
                       <TableCell className="font-medium">{member.name}</TableCell>
                       <TableCell>
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                          {member.telegram_id}
+                          {member.telegram_user_id}
                         </code>
                       </TableCell>
                       <TableCell>

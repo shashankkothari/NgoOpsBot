@@ -121,3 +121,10 @@ Only redirect when clearly out of domain — when in doubt, attempt to answer.
 class FinanceAgent(BaseAgent):
     agent_name = "finance"
     _agent_system_prompt = _SPECIALIST_PROMPT
+    tools = [
+        "calculator",
+        "web_search",
+        "read_sheet_tab",
+        "append_sheet_row",
+        "find_and_update_sheet_row",
+    ]

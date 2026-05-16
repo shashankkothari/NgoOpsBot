@@ -193,7 +193,14 @@ def create_app() -> FastAPI:
     from app.api.v1.admin.staff import router as staff_router
     from app.api.v1.admin.conversations import router as conversations_router
     from app.api.v1.admin.reminders import router as reminders_router
+    from app.api.v1.admin.support import router as admin_support_router
     from app.api.v1.google_oauth import router as google_router
+    from app.api.v1.staff.auth import router as staff_auth_router
+    from app.api.v1.staff.me import router as staff_me_router
+    from app.api.v1.staff.chat import router as staff_chat_router
+    from app.api.v1.staff.threads import router as staff_threads_router
+    from app.api.v1.staff.reminders import router as staff_reminders_router
+    from app.api.v1.staff.support import router as staff_support_router
 
     _app.include_router(health_router)
     _app.include_router(webhook_router)
@@ -201,9 +208,17 @@ def create_app() -> FastAPI:
     _app.include_router(staff_router)
     _app.include_router(conversations_router)
     _app.include_router(reminders_router)
+    _app.include_router(admin_support_router)
     # Google OAuth routes at /api/v1/google — prefix applied here so the router
     # stays mountable at different prefixes in tests without code changes
     _app.include_router(google_router, prefix="/api/v1/google")
+    # Staff portal routes — JWT-authenticated, no admin key required
+    _app.include_router(staff_auth_router)
+    _app.include_router(staff_me_router)
+    _app.include_router(staff_chat_router)
+    _app.include_router(staff_threads_router)
+    _app.include_router(staff_reminders_router)
+    _app.include_router(staff_support_router)
 
     # ---------------------------------------------------------------------- #
     # Prometheus instrumentation                                               #

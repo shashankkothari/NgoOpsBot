@@ -1,13 +1,7 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
-import {
-  ChevronRight,
-  LogOut,
-  User,
-  Home,
-} from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { ChevronRight, LogOut, User, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const BREADCRUMB_MAP: Record<string, string> = {
@@ -39,8 +33,14 @@ function getBreadcrumbs(pathname: string) {
 
 export function Topbar() {
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const router = useRouter();
   const breadcrumbs = getBreadcrumbs(pathname);
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/95 backdrop-blur px-6">
@@ -70,13 +70,13 @@ export function Topbar() {
             <User className="h-4 w-4 text-primary" />
           </div>
           <span className="text-muted-foreground font-medium hidden sm:block">
-            {session?.user?.name || "Admin"}
+            Admin
           </span>
         </div>
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => signOut({ callbackUrl: "/login" })}
+          onClick={handleLogout}
           className="gap-1.5 text-muted-foreground hover:text-foreground"
         >
           <LogOut className="h-4 w-4" />

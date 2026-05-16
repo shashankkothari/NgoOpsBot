@@ -18,10 +18,22 @@ from app.core.security import decrypt_field
 
 log = get_logger(__name__)
 
-# drive.file not drive — we only need our own files, not the NGO's entire Drive
+# Scopes are additive — we request only what each integration requires.
+# drive.file: files created by this app only (not the NGO's entire Drive).
+# drive.readonly: read arbitrary Drive files so agents can reference documents.
+# spreadsheets: full read/write access to Sheets (needed for Master Tracker).
+# gmail.readonly: read emails so agents can reference donor/grant correspondence.
+# gmail.compose: create drafts (NOT send) — staff must review before sending.
+# calendar.readonly: read events so agents can check deadlines and schedules.
+# calendar.events: create/update events (reminders, grant deadlines, etc.).
 SCOPES = [
     "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
 ]
 
 # Google's token revocation endpoint

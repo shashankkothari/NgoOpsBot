@@ -8,7 +8,6 @@ import {
   Search,
   Building2,
   ChevronRight,
-  MoreHorizontal,
   CheckCircle2,
   XCircle,
 } from "lucide-react";
@@ -33,9 +32,9 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { ngoApi, swrKeys, type NGO, type NGOCreate, type PaginatedResponse } from "@/lib/api";
+import { ngoApi, swrKeys, type NGO, type PaginatedResponse } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
-import { NGOForm } from "@/components/ngos/ngo-form";
+import { NGOWizard } from "@/components/ngos/ngo-wizard";
 import { useToast } from "@/components/ui/use-toast";
 
 export default function NGOsPage() {
@@ -50,19 +49,10 @@ export default function NGOsPage() {
     { keepPreviousData: true }
   );
 
-  const handleAdd = async (formData: NGOCreate) => {
-    try {
-      await ngoApi.create(formData);
-      await mutate();
-      setAddOpen(false);
-      toast({ title: "NGO created successfully" });
-    } catch (err) {
-      toast({
-        title: "Failed to create NGO",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
-      });
-    }
+  const handleWizardComplete = async (ngo: NGO) => {
+    await mutate();
+    setAddOpen(false);
+    toast({ title: `${ngo.name} onboarded successfully` });
   };
 
   return (
@@ -82,16 +72,17 @@ export default function NGOsPage() {
               Add NGO
             </Button>
           </SheetTrigger>
-          <SheetContent side="right" className="overflow-y-auto">
-            <SheetHeader>
-              <SheetTitle>Add New NGO</SheetTitle>
+          <SheetContent side="right" className="flex flex-col overflow-hidden sm:max-w-lg">
+            <SheetHeader className="flex-shrink-0">
+              <SheetTitle>Onboard New NGO</SheetTitle>
               <SheetDescription>
-                Onboard a new NGO tenant. All fields are required.
+                Complete the steps below to set up a new NGO tenant.
               </SheetDescription>
             </SheetHeader>
-            <div className="mt-6">
-              <NGOForm
-                onSubmit={handleAdd}
+            <div className="flex-1 overflow-hidden mt-6">
+              <NGOWizard
+                onCreate={ngoApi.create}
+                onComplete={handleWizardComplete}
                 onCancel={() => setAddOpen(false)}
               />
             </div>
@@ -183,7 +174,7 @@ export default function NGOsPage() {
                     </TableCell>
                     <TableCell>
                       <span className="text-sm">
-                        {ngo.staff_count ?? "—"}
+                        {"—"}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -229,7 +220,7 @@ export default function NGOsPage() {
       </Card>
 
       {/* Pagination */}
-      {data && data.pages > 1 && (
+      {data && data.total > 20 && (
         <div className="flex items-center justify-center gap-2">
           <Button
             variant="outline"
@@ -240,12 +231,12 @@ export default function NGOsPage() {
             Previous
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {data.pages}
+            Page {page}
           </span>
           <Button
             variant="outline"
             size="sm"
-            disabled={page === data.pages}
+            disabled={data.items.length < 20}
             onClick={() => setPage((p) => p + 1)}
           >
             Next

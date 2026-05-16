@@ -65,3 +65,10 @@ Only redirect when clearly out of domain — when in doubt, attempt to answer.
 class MarketingAgent(BaseAgent):
     agent_name = "marketing"
     _agent_system_prompt = MARKETING_SPECIALIST_PROMPT
+    tools = [
+        "calculator",
+        "web_search",
+        "search_emails",
+        "get_email",
+        "create_email_draft",
+    ]

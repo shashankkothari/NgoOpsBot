@@ -15,6 +15,10 @@ import {
   Bell,
   Loader2,
   Clock,
+  Copy,
+  RefreshCw,
+  AlertTriangle,
+  Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,10 +52,10 @@ import {
   reminderApi,
   swrKeys,
   type NGO,
+  type NGOStats,
   type Staff,
   type StaffCreate,
   type Reminder,
-  type PaginatedResponse,
 } from "@/lib/api";
 import { formatDate, formatDateTime, AGENT_LABELS } from "@/lib/utils";
 import { NGOForm } from "@/components/ngos/ngo-form";
@@ -67,7 +71,7 @@ function StaffTab({ ngoId }: { ngoId: string }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editStaff, setEditStaff] = useState<Staff | null>(null);
 
-  const { data, isLoading, mutate } = useSWR<PaginatedResponse<Staff>>(
+  const { data, isLoading, mutate } = useSWR(
     swrKeys.staff(ngoId),
     () => staffApi.list(ngoId)
   );
@@ -154,7 +158,7 @@ function StaffTab({ ngoId }: { ngoId: string }) {
                     <TableCell className="font-medium">{member.name}</TableCell>
                     <TableCell>
                       <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                        {member.telegram_id}
+                        {member.telegram_user_id}
                       </code>
                     </TableCell>
                     <TableCell>
@@ -251,7 +255,7 @@ function StaffTab({ ngoId }: { ngoId: string }) {
 // ─── Reminders Tab ────────────────────────────────────────────────────────────
 
 function RemindersTab({ ngoId }: { ngoId: string }) {
-  const { data, isLoading } = useSWR<PaginatedResponse<Reminder>>(
+  const { data, isLoading } = useSWR<Reminder[]>(
     swrKeys.reminders(ngoId),
     () => reminderApi.list(ngoId)
   );
@@ -262,30 +266,35 @@ function RemindersTab({ ngoId }: { ngoId: string }) {
         Array.from({ length: 3 }).map((_, i) => (
           <Skeleton key={i} className="h-20 w-full rounded-xl" />
         ))
-      ) : data?.items.length ? (
-        data.items.map((reminder) => (
+      ) : data?.length ? (
+        data.map((reminder) => (
           <Card key={reminder.id}>
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <p className="font-medium text-sm">{reminder.title}</p>
+                    <Badge variant="secondary" className="text-xs capitalize">
+                      {reminder.reminder_type}
+                    </Badge>
                     <Badge variant={reminder.is_active ? "success" : "outline"}>
                       {reminder.is_active ? "Active" : "Paused"}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground line-clamp-2">
-                    {reminder.message}
+                  <p className="text-xs text-muted-foreground">
+                    Agent: {AGENT_LABELS[reminder.agent_name]} · {reminder.target_audience}
                   </p>
                   <div className="flex items-center gap-3 mt-2">
-                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                      {reminder.schedule_cron}
-                    </code>
-                    {reminder.next_run_at && (
+                    {reminder.next_fire_at && (
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Clock className="h-3 w-3" />
-                        Next: {formatDateTime(reminder.next_run_at)}
+                        Next: {formatDateTime(reminder.next_fire_at)}
                       </div>
+                    )}
+                    {reminder.last_fired_at && (
+                      <p className="text-xs text-muted-foreground">
+                        Last: {formatDateTime(reminder.last_fired_at)}
+                      </p>
                     )}
                   </div>
                 </div>
@@ -311,11 +320,65 @@ export default function NGODetailPage() {
   const { toast } = useToast();
   const ngoId = params.id as string;
   const [editOpen, setEditOpen] = useState(false);
+  const [refreshingWebhook, setRefreshingWebhook] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const { data: ngo, isLoading, mutate } = useSWR<NGO>(
     swrKeys.ngo(ngoId),
     () => ngoApi.get(ngoId)
   );
+
+  const { data: stats } = useSWR<NGOStats>(
+    swrKeys.ngoStats(ngoId),
+    () => ngoApi.stats(ngoId),
+    { refreshInterval: 60000 }
+  );
+
+  const [webhookUrl, setWebhookUrl] = useState<string>("");
+
+  const copyWebhook = (url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleRefreshWebhook = async () => {
+    setRefreshingWebhook(true);
+    try {
+      const result = await ngoApi.refreshWebhook(ngoId);
+      const url = result.webhook_url ?? Object.values(result)[0] ?? "";
+      setWebhookUrl(url);
+      await mutate();
+      toast({ title: "Webhook refreshed and re-registered with Telegram" });
+    } catch (err) {
+      toast({
+        title: "Failed to refresh webhook",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setRefreshingWebhook(false);
+    }
+  };
+
+  const handleDeactivate = async () => {
+    if (!confirm(`Deactivate ${ngo?.name}? This will stop all bot messages.`)) return;
+    setDeactivating(true);
+    try {
+      await ngoApi.deactivate(ngoId);
+      await mutate();
+      toast({ title: "NGO deactivated" });
+    } catch (err) {
+      toast({
+        title: "Failed to deactivate NGO",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setDeactivating(false);
+    }
+  };
 
   const handleEdit = async (formData: Parameters<typeof ngoApi.update>[1]) => {
     try {
@@ -410,7 +473,7 @@ export default function NGODetailPage() {
               <Users className="h-3.5 w-3.5 text-muted-foreground" />
               <p className="text-xs text-muted-foreground">Staff</p>
             </div>
-            <p className="text-sm font-medium">{ngo.staff_count ?? "—"}</p>
+            <p className="text-sm font-medium">{stats?.active_staff_count ?? "—"}</p>
           </CardContent>
         </Card>
         <Card>
@@ -423,6 +486,80 @@ export default function NGODetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Activity stats */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">Total Messages</p>
+              </div>
+              <p className="text-2xl font-bold">{stats.total_messages.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">Total Tokens</p>
+              </div>
+              <p className="text-2xl font-bold">{stats.total_tokens.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">Active Staff</p>
+              </div>
+              <p className="text-2xl font-bold">{stats.active_staff_count}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Bell className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">Reminders</p>
+              </div>
+              <p className="text-2xl font-bold">{stats.reminder_count}</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Webhook URL — shown after refresh */}
+      {webhookUrl && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Link2 className="h-4 w-4 text-primary" />
+              <CardTitle className="text-base">Webhook URL</CardTitle>
+            </div>
+            <CardDescription>
+              Registered with Telegram — bot receives messages via this URL.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={webhookUrl}
+                className="flex-1 h-9 rounded-md border border-input bg-muted px-3 py-1 text-xs font-mono text-muted-foreground focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => copyWebhook(webhookUrl)}
+                className="inline-flex items-center gap-1.5 px-3 h-9 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent transition-colors"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                {copied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tabs */}
       <Tabs defaultValue="staff">
@@ -444,6 +581,63 @@ export default function NGODetailPage() {
           <RemindersTab ngoId={ngoId} />
         </TabsContent>
       </Tabs>
+
+      {/* Danger zone */}
+      <Card className="border-destructive/30">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-destructive" />
+            <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
+          </div>
+          <CardDescription>Irreversible or high-impact actions.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between rounded-lg border border-border p-3">
+            <div>
+              <p className="text-sm font-medium">Refresh Webhook</p>
+              <p className="text-xs text-muted-foreground">
+                Generates a new secret and re-registers the webhook with Telegram.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefreshWebhook}
+              disabled={refreshingWebhook}
+            >
+              {refreshingWebhook ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Refresh
+            </Button>
+          </div>
+          {ngo.is_active && (
+            <div className="flex items-center justify-between rounded-lg border border-destructive/30 p-3 bg-destructive/5">
+              <div>
+                <p className="text-sm font-medium text-destructive">Deactivate NGO</p>
+                <p className="text-xs text-muted-foreground">
+                  Stops the bot from processing messages. Staff can no longer use the bot.
+                </p>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDeactivate}
+                disabled={deactivating}
+              >
+                {deactivating ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <XCircle className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Deactivate
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Edit NGO Sheet */}
       <Sheet open={editOpen} onOpenChange={setEditOpen}>

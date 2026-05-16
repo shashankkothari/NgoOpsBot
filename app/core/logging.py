@@ -17,10 +17,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -108,30 +105,38 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
 # Middleware
 # ---------------------------------------------------------------------------
 
-class RequestContextMiddleware(BaseHTTPMiddleware):
+class RequestContextMiddleware:
     """Generate a request_id UUID and bind it to every log line in the request.
+
+    Pure ASGI implementation (no BaseHTTPMiddleware) to avoid anyio task-group
+    conflicts with asyncpg when testing via ASGITransport.
 
     Must be added before any middleware that logs (e.g. RequestLoggingMiddleware)
     so the ID is available throughout the entire request lifecycle.
     """
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         request_id = str(uuid.uuid4())
         token = _request_id_var.set(request_id)
-
-        # structlog contextvars are per-task; clear before each request so
-        # no context leaks between requests handled by the same event-loop task
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
 
+        async def _send_with_request_id(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"x-request-id", request_id.encode()))
+                message = {**message, "headers": headers}
+            await send(message)
+
         try:
-            response: Response = await call_next(request)
+            await self.app(scope, receive, _send_with_request_id)
         finally:
             _request_id_var.reset(token)
             structlog.contextvars.clear_contextvars()
-
-        response.headers["X-Request-ID"] = request_id
-        return response

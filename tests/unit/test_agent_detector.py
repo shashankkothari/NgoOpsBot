@@ -54,7 +54,7 @@ def _all_enabled() -> list[NGOSettings]:
 @pytest.mark.asyncio
 async def test_fundraising_detected_from_donation_campaign():
     staff = _make_staff()  # empty = all agents
-    result = await detect_agent("Our donation campaign needs help", staff, _all_enabled())
+    result = await detect_agent("Our donation campaign is running", staff, _all_enabled())
     assert result == "fundraising"
 
 
@@ -87,21 +87,21 @@ async def test_compliance_detected_from_fcra():
 
 
 # ---------------------------------------------------------------------------
-# No match → None
+# No match → "general" (system fallback, never None)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_no_keyword_match_returns_none():
+async def test_no_keyword_match_returns_general():
     staff = _make_staff()
     result = await detect_agent("The weather is nice today", staff, _all_enabled())
-    assert result is None
+    assert result == "general"
 
 
 @pytest.mark.asyncio
-async def test_empty_text_returns_none():
+async def test_empty_text_returns_general():
     staff = _make_staff()
     result = await detect_agent("", staff, _all_enabled())
-    assert result is None
+    assert result == "general"
 
 
 # ---------------------------------------------------------------------------
@@ -109,11 +109,11 @@ async def test_empty_text_returns_none():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_agent_detected_but_not_in_staff_allowed_returns_none():
-    # fundraising keyword matches but staff only has finance access
+async def test_agent_detected_but_not_in_staff_allowed_returns_general():
+    # fundraising keyword matches but staff only has finance access → fallback to general
     staff = _make_staff(allowed=["finance"])
     result = await detect_agent("Our donation campaign", staff, _all_enabled())
-    assert result is None
+    assert result == "general"
 
 
 @pytest.mark.asyncio
@@ -136,12 +136,12 @@ async def test_empty_allowed_agents_means_full_access():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_agent_disabled_in_ngo_settings_returns_none():
-    # fundraising is disabled for this NGO
+async def test_agent_disabled_in_ngo_settings_falls_back_to_next_best():
+    # fundraising is disabled; "campaign" also hits marketing → marketing wins
     settings = _make_settings(enabled=["finance", "marketing", "hr", "compliance"])
     staff = _make_staff()  # all access
     result = await detect_agent("Our donation campaign", staff, settings)
-    assert result is None
+    assert result in ("marketing", "general")
 
 
 @pytest.mark.asyncio
@@ -153,12 +153,12 @@ async def test_agent_enabled_in_ngo_settings_is_returned():
 
 
 @pytest.mark.asyncio
-async def test_no_enabled_agents_returns_none():
-    # NGO has disabled everything
+async def test_no_enabled_agents_returns_general():
+    # NGO has disabled everything → fallback to general
     settings: list[NGOSettings] = []
     staff = _make_staff()
     result = await detect_agent("Our donation campaign invoice", staff, settings)
-    assert result is None
+    assert result == "general"
 
 
 # ---------------------------------------------------------------------------
@@ -199,14 +199,12 @@ async def test_tie_broken_by_canonical_agent_order():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_hindi_donation_campaign_text_returns_fundraising_or_none():
-    # "दान अभियान" = "donation campaign" — only matches if Hindi keywords
-    # are in the keyword list (they are not currently).
-    # This test documents the expected behaviour: None when no keyword matches.
+async def test_hindi_donation_campaign_text_returns_general():
+    # "दान अभियान" = "donation campaign" — no English keywords matched,
+    # so the system falls back to general (not None).
     staff = _make_staff()
     result = await detect_agent("दान अभियान के लिए मदद चाहिए", staff, _all_enabled())
-    # Current implementation uses English substrings only
-    assert result is None
+    assert result == "general"
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from app.models.conversation import Conversation, ConversationThread
     from app.models.reminder import ReminderLog
     from app.models.audit import AuditLog
+    from app.models.support import SupportTicket
 
 
 class Staff(UUIDMixin, TimestampMixin, Base):
@@ -102,6 +103,9 @@ class Staff(UUIDMixin, TimestampMixin, Base):
     )
     audit_logs: Mapped[list[AuditLog]] = relationship(
         "AuditLog", back_populates="staff"
+    )
+    support_tickets: Mapped[list[SupportTicket]] = relationship(
+        "SupportTicket", back_populates="staff", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

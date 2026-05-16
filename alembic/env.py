@@ -11,6 +11,15 @@ import os
 from logging.config import fileConfig
 from typing import Any
 
+# Load .env before any os.environ reads so alembic works without manually
+# exporting env vars (e.g. SYNC_DATABASE_URL) in the shell.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)  # override=False: shell exports take precedence
+except ImportError:
+    pass  # python-dotenv not installed — fall back to env vars already in shell
+
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
@@ -29,6 +38,7 @@ import app.models.staff        # noqa: F401
 import app.models.conversation  # noqa: F401
 import app.models.task         # noqa: F401
 import app.models.audit_log    # noqa: F401
+import app.models.support      # noqa: F401
 # fmt: on
 
 # ---------------------------------------------------------------------------

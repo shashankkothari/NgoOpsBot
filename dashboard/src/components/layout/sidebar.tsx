@@ -11,6 +11,7 @@ import {
   ScrollText,
   Activity,
   LayoutDashboard,
+  LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +41,11 @@ const navItems = [
     label: "Reminders",
     href: "/dashboard/reminders",
     icon: Bell,
+  },
+  {
+    label: "Support Queue",
+    href: "/dashboard/support",
+    icon: LifeBuoy,
   },
   {
     label: "Audit Logs",

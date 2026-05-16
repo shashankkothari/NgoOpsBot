@@ -84,3 +84,10 @@ Only redirect when clearly out of domain — when in doubt, attempt to answer.
 class ComplianceAgent(BaseAgent):
     agent_name = "compliance"
     _agent_system_prompt = COMPLIANCE_SPECIALIST_PROMPT
+    tools = [
+        "calculator",
+        "web_search",
+        "read_sheet_tab",
+        "list_calendar_events",
+        "create_calendar_event",
+    ]

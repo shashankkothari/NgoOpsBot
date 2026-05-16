@@ -4,9 +4,10 @@ Integration tests for the Admin NGO CRUD API.
 Endpoint prefix: /api/v1/admin/ngos
 
 Uses:
-- Real async SQLite DB (in-memory via aiosqlite) through the conftest fixtures
+- Real PostgreSQL test database (ngoopsbot_test) — the app uses its own engine
 - HTTPX async test client against the real FastAPI app
 - Telegram setWebhook patched out (we don't want real HTTP calls in tests)
+- Tables are truncated after each test via the _truncate_after_test autouse fixture
 
 All tests require the X-Admin-API-Key header (enforced by NGOAuthMiddleware).
 """
@@ -14,16 +15,12 @@ All tests require the X-Admin-API-Key header (enforced by NGOAuthMiddleware).
 from __future__ import annotations
 
 import uuid
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
-import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.core.database import get_db
-from app.models.ngo import NGO
 
 
 # ---------------------------------------------------------------------------
@@ -43,36 +40,6 @@ _BASE_CREATE_PAYLOAD = {
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest_asyncio.fixture
-async def admin_client(async_session: AsyncSession):
-    """
-    HTTPX async test client wired to the test DB session and with the
-    admin API key set in headers by default.
-    Telegram webhook registration is patched to a no-op throughout.
-    """
-    async def _override_get_db():
-        yield async_session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
-    with patch(
-        "app.api.v1.admin.ngos._register_telegram_webhook",
-        new_callable=AsyncMock,
-    ):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://testserver",
-            headers=ADMIN_HEADERS,
-        ) as client:
-            yield client
-
-    app.dependency_overrides.clear()
-
-
-# ---------------------------------------------------------------------------
 # Helper — create an NGO and return its JSON body
 # ---------------------------------------------------------------------------
 
@@ -84,43 +51,28 @@ async def _create_ngo(client: AsyncClient, overrides: dict | None = None) -> dic
 
 
 # ---------------------------------------------------------------------------
-# Auth guard tests
+# Auth guard tests (no admin key / wrong key)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_missing_admin_key_returns_401(async_session: AsyncSession):
-    async def _override_get_db():
-        yield async_session
-
-    app.dependency_overrides[get_db] = _override_get_db
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://testserver",
-            # No auth header
-        ) as client:
-            resp = await client.get("/api/v1/admin/ngos")
-            assert resp.status_code == 401
-    finally:
-        app.dependency_overrides.clear()
+async def test_missing_admin_key_returns_401():
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        resp = await client.get("/api/v1/admin/ngos")
+        assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_wrong_admin_key_returns_401(async_session: AsyncSession):
-    async def _override_get_db():
-        yield async_session
-
-    app.dependency_overrides[get_db] = _override_get_db
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://testserver",
-            headers={"X-Admin-API-Key": "wrong-key"},
-        ) as client:
-            resp = await client.get("/api/v1/admin/ngos")
-            assert resp.status_code == 401
-    finally:
-        app.dependency_overrides.clear()
+async def test_wrong_admin_key_returns_401():
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        headers={"X-Admin-API-Key": "wrong-key"},
+    ) as client:
+        resp = await client.get("/api/v1/admin/ngos")
+        assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +86,6 @@ async def test_create_ngo_returns_201_with_id_and_slug(admin_client: AsyncClient
     assert resp.status_code == 201
     body = resp.json()
     assert "id" in body
-    # UUID is parseable
     uuid.UUID(body["id"])
     assert "slug" in body
     assert body["slug"] == "green-future-ngo"
@@ -148,7 +99,6 @@ async def test_create_ngo_slug_is_url_safe(admin_client: AsyncClient):
     )
     assert resp.status_code == 201
     slug = resp.json()["slug"]
-    # Slug must be lowercase, hyphen-separated, no special chars
     assert slug == slug.lower()
     assert " " not in slug
     assert "!" not in slug
@@ -158,7 +108,6 @@ async def test_create_ngo_slug_is_url_safe(admin_client: AsyncClient):
 @pytest.mark.asyncio
 async def test_create_ngo_with_duplicate_name_returns_409(admin_client: AsyncClient):
     await _create_ngo(admin_client)
-    # Try again with the same name
     resp = await admin_client.post("/api/v1/admin/ngos", json=_BASE_CREATE_PAYLOAD)
     assert resp.status_code == 409
 
@@ -169,7 +118,6 @@ async def test_create_ngo_with_duplicate_name_returns_409(admin_client: AsyncCli
 
 @pytest.mark.asyncio
 async def test_list_ngos_returns_paginated_response(admin_client: AsyncClient):
-    # Create two NGOs so the list is non-empty
     await _create_ngo(admin_client, {"name": "Alpha NGO"})
     await _create_ngo(admin_client, {"name": "Beta NGO"})
 
@@ -238,7 +186,6 @@ async def test_update_ngo_timezone_returns_200_and_persists(admin_client: AsyncC
     assert resp.status_code == 200
     assert resp.json()["timezone"] == "America/New_York"
 
-    # Re-fetch to verify DB persistence within the test session
     get_resp = await admin_client.get(f"/api/v1/admin/ngos/{ngo_id}")
     assert get_resp.status_code == 200
     assert get_resp.json()["timezone"] == "America/New_York"
@@ -266,7 +213,6 @@ async def test_soft_delete_ngo_returns_204_and_sets_inactive(admin_client: Async
     del_resp = await admin_client.delete(f"/api/v1/admin/ngos/{ngo_id}")
     assert del_resp.status_code == 204
 
-    # Verify is_active=False via GET
     get_resp = await admin_client.get(f"/api/v1/admin/ngos/{ngo_id}")
     assert get_resp.status_code == 200
     assert get_resp.json()["is_active"] is False
@@ -297,7 +243,6 @@ async def test_get_ngo_stats_returns_200_with_expected_fields(admin_client: Asyn
     assert resp.status_code == 200
     body = resp.json()
 
-    # All required aggregate fields must be present
     assert "total_messages" in body
     assert "total_tokens" in body
     assert "active_staff_count" in body
@@ -305,7 +250,6 @@ async def test_get_ngo_stats_returns_200_with_expected_fields(admin_client: Asyn
     assert "ngo_id" in body
     assert "ngo_slug" in body
 
-    # A freshly created NGO has zero activity
     assert body["total_messages"] == 0
     assert body["total_tokens"] == 0
     assert body["active_staff_count"] == 0

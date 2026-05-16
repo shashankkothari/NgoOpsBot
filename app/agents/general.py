@@ -71,6 +71,19 @@ Be concise, warm, and action-oriented. Under 300 words unless more detail is ask
 class GeneralAgent(BaseAgent):
     agent_name = "general"
     _agent_system_prompt = _DIRECT_ANSWER_PROMPT
+    # General agent has access to all tools — it's the orchestrator
+    tools = [
+        "calculator",
+        "web_search",
+        "read_sheet_tab",
+        "append_sheet_row",
+        "find_and_update_sheet_row",
+        "search_emails",
+        "get_email",
+        "create_email_draft",
+        "list_calendar_events",
+        "create_calendar_event",
+    ]
 
     async def invoke(
         self,

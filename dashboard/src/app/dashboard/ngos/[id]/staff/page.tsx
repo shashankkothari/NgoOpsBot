@@ -175,7 +175,7 @@ export default function StaffManagementPage() {
                     </TableCell>
                     <TableCell>
                       <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                        {member.telegram_id}
+                        {member.telegram_user_id}
                       </code>
                     </TableCell>
                     <TableCell>

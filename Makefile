@@ -11,8 +11,8 @@
 # =============================================================================
 
 .DEFAULT_GOAL := help
-.PHONY: dev test test-unit lint format migrate migrate-new seed setup \
-        docker-up docker-down dashboard clean check-env help
+.PHONY: setup dev stop migrate reset-db test test-unit lint format \
+        migrate-new seed docker-up docker-down dashboard clean check-env help
 
 # Detect the Python / venv binary
 PYTHON       := .venv/bin/python
@@ -39,8 +39,11 @@ endif
 # ---------------------------------------------------------------------------
 # Development server
 # ---------------------------------------------------------------------------
-dev: ## Start local dev server with hot reload
-	$(UVICORN) app.main:app --reload --host 0.0.0.0 --port 8000 --log-level debug
+dev: ## Start backend dev server (ensures postgres+redis up, loads .env)
+	bash scripts/dev.sh
+
+stop: ## Kill backend server (uvicorn on port 8000)
+	@lsof -ti tcp:8000 | xargs kill -9 2>/dev/null && echo "Server stopped." || echo "No server running on :8000."
 
 # ---------------------------------------------------------------------------
 # Testing
@@ -69,6 +72,12 @@ format: ## Auto-fix formatting with ruff
 migrate: ## Run alembic upgrade head
 	$(ALEMBIC) upgrade head
 
+reset-db: ## Drop and recreate ngoopsbot database, then run migrations
+	/opt/homebrew/opt/postgresql@16/bin/dropdb -h 127.0.0.1 -U shashankkothari --if-exists ngoopsbot
+	/opt/homebrew/opt/postgresql@16/bin/createdb -h 127.0.0.1 -U shashankkothari ngoopsbot
+	$(ALEMBIC) upgrade head
+	@echo "Database reset complete."
+
 migrate-new: ## Create new migration: make migrate-new name="add_column_x"
 ifndef name
 	$(error Usage: make migrate-new name="describe_your_migration")
@@ -84,8 +93,8 @@ seed: ## Seed dev database with Demo NGO and sample data
 # ---------------------------------------------------------------------------
 # First-time setup
 # ---------------------------------------------------------------------------
-setup: ## Full dev setup (first time — installs deps, hooks, starts services, runs migrations)
-	bash scripts/setup_dev.sh
+setup: ## First-time setup: start services, create DB, run migrations
+	bash scripts/setup.sh
 
 # ---------------------------------------------------------------------------
 # Docker services

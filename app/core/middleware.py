@@ -9,21 +9,18 @@ Order in main.py matters:
   4. CORSMiddleware (FastAPI)  — must be inside logging so CORS preflight hits are
                                  recorded; keeps the two concerns separate.
 
-Starlette middleware runs in LIFO order for requests (outermost added last runs
-first on the request path), but we add them in the order above via add_middleware
-in main.py, which prepends each one, achieving the desired call order.
+All middleware is implemented as pure ASGI (not BaseHTTPMiddleware) to avoid
+anyio task-group / asyncpg event-loop conflicts when testing with ASGITransport.
 """
 
 from __future__ import annotations
 
 import hmac
+import json
 import time
 from typing import Any
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -34,13 +31,10 @@ log = get_logger(__name__)
 # Admin auth middleware
 # ---------------------------------------------------------------------------
 
-# Paths that begin with this prefix require ADMIN_API_KEY authentication.
-# The prefix intentionally covers all versioned admin sub-paths
-# (e.g. /api/v1/admin/ngos, /api/v1/admin/staff, /api/v1/admin/reminders).
 _ADMIN_PATH_PREFIX = "/api/v1/admin"
 
 
-class NGOAuthMiddleware(BaseHTTPMiddleware):
+class NGOAuthMiddleware:
     """Reject requests to /api/v1/admin/* that lack a valid ADMIN_API_KEY header.
 
     Telegram webhooks (/api/v1/webhook/*) and health endpoints (/health) are
@@ -48,41 +42,51 @@ class NGOAuthMiddleware(BaseHTTPMiddleware):
 
     The key is compared with hmac.compare_digest (constant-time) to eliminate
     timing side-channels that could allow byte-by-byte secret enumeration.
-    This is defence-in-depth: the key is already high-entropy, but the cost
-    of constant-time comparison is negligible and the habit is worth building.
     """
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
-        if not request.url.path.startswith(_ADMIN_PATH_PREFIX):
-            return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path: str = scope.get("path", "")
+        method: str = scope.get("method", "")
+
+        if method == "OPTIONS" or not path.startswith(_ADMIN_PATH_PREFIX):
+            await self.app(scope, receive, send)
+            return
+
+        headers: dict[str, str] = {
+            k.decode(): v.decode()
+            for k, v in scope.get("headers", [])
+        }
+        api_key = headers.get("x-admin-api-key") or headers.get(
+            "authorization", ""
+        ).removeprefix("Bearer ").removeprefix("bearer ")
 
         settings = get_settings()
-        api_key = request.headers.get("X-Admin-API-Key") or request.headers.get(
-            "Authorization", ""
-        ).removeprefix("Bearer ")
-
-        # Constant-time comparison prevents timing-based secret enumeration.
-        # We check api_key is non-empty first to avoid compare_digest on empty bytes.
         valid = bool(api_key) and hmac.compare_digest(
             api_key.encode(), settings.ADMIN_API_KEY.encode()
         )
 
         if not valid:
-            log.warning(
-                "admin_auth_rejected",
-                path=request.url.path,
-                method=request.method,
-            )
-            return JSONResponse(
-                status_code=401,
-                # Generic message — do NOT reveal whether the key was missing vs wrong
-                content={"detail": "Invalid or missing admin API key"},
-            )
+            log.warning("admin_auth_rejected", path=path, method=method)
+            body = json.dumps({"detail": "Invalid or missing admin API key"}).encode()
+            await send({
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body, "more_body": False})
+            return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +96,7 @@ class NGOAuthMiddleware(BaseHTTPMiddleware):
 _SKIP_LOG_PATHS = frozenset({"/health", "/metrics", "/health/ready"})
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
+class RequestLoggingMiddleware:
     """Log every request with method, path, status code, and wall-clock duration.
 
     Health and metrics endpoints are skipped to avoid flooding logs with
@@ -100,22 +104,38 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
-        if request.url.path in _SKIP_LOG_PATHS:
-            return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
+        path: str = scope.get("path", "")
+        if path in _SKIP_LOG_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        method: str = scope.get("method", "")
+        status_code = 0
         start = time.perf_counter()
-        response: Response = await call_next(request)
-        duration_ms = round((time.perf_counter() - start) * 1000, 1)
 
-        log.info(
-            "http_request",
-            method=request.method,
-            path=request.url.path,
-            status_code=response.status_code,
-            duration_ms=duration_ms,
-            client_ip=request.client.host if request.client else None,
-        )
-        return response
+        async def _send_wrapper(message: Any) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, _send_wrapper)
+        finally:
+            duration_ms = round((time.perf_counter() - start) * 1000, 1)
+            client: Any = scope.get("client")
+            log.info(
+                "http_request",
+                method=method,
+                path=path,
+                status_code=status_code,
+                duration_ms=duration_ms,
+                client_ip=client[0] if client else None,
+            )

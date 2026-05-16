@@ -16,14 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
 import { cn, AGENT_LABELS } from "@/lib/utils";
-import {
-  type Staff,
-  type StaffCreate,
-  type StaffUpdate,
-  type AgentType,
-} from "@/lib/api";
+import { type Staff, type StaffCreate, type StaffUpdate, type AgentType } from "@/lib/api";
 
 const ALL_AGENTS: AgentType[] = [
   "fundraising",
@@ -35,10 +29,13 @@ const ALL_AGENTS: AgentType[] = [
 
 const staffSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
-  telegram_id: z
+  email: z.string().email("Must be a valid email").optional().or(z.literal("")),
+  phone: z.string().optional(),
+  telegram_user_id: z
     .string()
-    .min(1, "Telegram ID is required")
-    .regex(/^\d+$/, "Telegram ID must be numeric"),
+    .min(1, "Telegram User ID is required")
+    .regex(/^\d+$/, "Telegram User ID must be numeric"),
+  telegram_username: z.string().optional(),
   role: z.enum(["admin", "manager", "staff"]),
   is_active: z.boolean().optional(),
 });
@@ -53,12 +50,7 @@ interface StaffFormProps {
   isEdit?: boolean;
 }
 
-export function StaffForm({
-  staff,
-  onSubmit,
-  onCancel,
-  isEdit = false,
-}: StaffFormProps) {
+export function StaffForm({ staff, onSubmit, onCancel, isEdit = false }: StaffFormProps) {
   const [selectedAgents, setSelectedAgents] = useState<AgentType[]>(
     staff?.allowed_agents ?? []
   );
@@ -72,7 +64,10 @@ export function StaffForm({
     resolver: zodResolver(staffSchema),
     defaultValues: {
       name: staff?.name ?? "",
-      telegram_id: staff?.telegram_id ?? "",
+      email: staff?.email ?? "",
+      phone: staff?.phone ?? "",
+      telegram_user_id: staff?.telegram_user_id ? String(staff.telegram_user_id) : "",
+      telegram_username: staff?.telegram_username ?? "",
       role: staff?.role ?? "staff",
       is_active: staff?.is_active ?? true,
     },
@@ -87,7 +82,10 @@ export function StaffForm({
   const handleFormSubmit = async (data: StaffFormValues) => {
     const payload: StaffCreate | StaffUpdate = {
       name: data.name,
-      telegram_id: data.telegram_id,
+      email: data.email || null,
+      phone: data.phone || null,
+      telegram_user_id: parseInt(data.telegram_user_id, 10),
+      telegram_username: data.telegram_username || null,
       role: data.role,
       allowed_agents: selectedAgents,
       ...(isEdit ? { is_active: data.is_active } : {}),
@@ -97,43 +95,70 @@ export function StaffForm({
 
   return (
     <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
-      {/* Name */}
       <div className="space-y-1.5">
         <Label htmlFor="staff-name">
           Full Name <span className="text-destructive">*</span>
         </Label>
-        <Input
-          id="staff-name"
-          placeholder="Jane Doe"
-          {...register("name")}
-        />
+        <Input id="staff-name" placeholder="Jane Doe" {...register("name")} />
         {errors.name && (
           <p className="text-xs text-destructive">{errors.name.message}</p>
         )}
       </div>
 
-      {/* Telegram ID */}
       <div className="space-y-1.5">
-        <Label htmlFor="telegram_id">
+        <Label htmlFor="staff-email">Email</Label>
+        <Input
+          id="staff-email"
+          type="email"
+          placeholder="jane@example.org"
+          {...register("email")}
+        />
+        {errors.email && (
+          <p className="text-xs text-destructive">{errors.email.message}</p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Used for staff portal login (Google sign-in must match this email).
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="staff-phone">Phone (optional)</Label>
+        <Input
+          id="staff-phone"
+          type="tel"
+          placeholder="+91 98765 43210"
+          {...register("phone")}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="telegram_user_id">
           Telegram User ID <span className="text-destructive">*</span>
         </Label>
         <Input
-          id="telegram_id"
+          id="telegram_user_id"
           placeholder="123456789"
           className="font-mono"
-          {...register("telegram_id")}
+          {...register("telegram_user_id")}
         />
-        {errors.telegram_id && (
-          <p className="text-xs text-destructive">
-            {errors.telegram_id.message}
-          </p>
+        {errors.telegram_user_id && (
+          <p className="text-xs text-destructive">{errors.telegram_user_id.message}</p>
         )}
         <p className="text-xs text-muted-foreground">
           Numeric Telegram user ID (use @userinfobot to find it).
         </p>
       </div>
 
-      {/* Role */}
+      <div className="space-y-1.5">
+        <Label htmlFor="telegram_username">Telegram Username (optional)</Label>
+        <Input
+          id="telegram_username"
+          placeholder="@username"
+          className="font-mono"
+          {...register("telegram_username")}
+        />
+      </div>
+
       <div className="space-y-1.5">
         <Label>
           Role <span className="text-destructive">*</span>
@@ -151,12 +176,8 @@ export function StaffForm({
             <SelectItem value="staff">Staff — Bot access only</SelectItem>
           </SelectContent>
         </Select>
-        {errors.role && (
-          <p className="text-xs text-destructive">{errors.role.message}</p>
-        )}
       </div>
 
-      {/* Agent access */}
       <div className="space-y-2">
         <Label>Allowed Agents</Label>
         <div className="flex flex-wrap gap-2">
@@ -180,9 +201,6 @@ export function StaffForm({
             );
           })}
         </div>
-        <p className="text-xs text-muted-foreground">
-          Select which AI agents this staff member can access.
-        </p>
         {selectedAgents.length === 0 && (
           <p className="text-xs text-amber-500">
             No agents selected — staff will have no bot access.
@@ -190,7 +208,6 @@ export function StaffForm({
         )}
       </div>
 
-      {/* Active toggle (edit only) */}
       {isEdit && (
         <div className="flex items-center justify-between rounded-lg border border-border p-3">
           <div>

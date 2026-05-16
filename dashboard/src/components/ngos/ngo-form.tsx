@@ -62,8 +62,8 @@ export function NGOForm({ ngo, onSubmit, onCancel, isEdit = false }: NGOFormProp
     defaultValues: {
       name: ngo?.name ?? "",
       slug: ngo?.slug ?? "",
-      telegram_bot_token: ngo?.telegram_bot_token ?? "",
-      anthropic_api_key: ngo?.anthropic_api_key ?? "",
+      telegram_bot_token: ngo?.telegram_bot_token_decrypted ?? "",
+      anthropic_api_key: ngo?.anthropic_api_key_decrypted ?? "",
       timezone: ngo?.timezone ?? "UTC",
       language: ngo?.language ?? "en",
       is_active: ngo?.is_active ?? true,
@@ -81,7 +81,6 @@ export function NGOForm({ ngo, onSubmit, onCancel, isEdit = false }: NGOFormProp
   const handleFormSubmit = async (data: NGOFormValues) => {
     const payload: NGOCreate | NGOUpdate = {
       name: data.name,
-      slug: data.slug,
       timezone: data.timezone,
       language: data.language,
       ...(data.telegram_bot_token ? { telegram_bot_token: data.telegram_bot_token } : {}),
@@ -108,24 +107,18 @@ export function NGOForm({ ngo, onSubmit, onCancel, isEdit = false }: NGOFormProp
         )}
       </div>
 
-      {/* Slug */}
-      <div className="space-y-1.5">
-        <Label htmlFor="slug">
-          Slug <span className="text-destructive">*</span>
-        </Label>
-        <Input
-          id="slug"
-          placeholder="green-future-ngo"
-          className="font-mono"
-          {...register("slug")}
-        />
-        {errors.slug && (
-          <p className="text-xs text-destructive">{errors.slug.message}</p>
-        )}
-        <p className="text-xs text-muted-foreground">
-          Unique identifier used in API routes and URLs.
-        </p>
-      </div>
+      {/* Slug — read-only display in edit mode, hidden in create mode (auto-generated) */}
+      {isEdit && ngo?.slug && (
+        <div className="space-y-1.5">
+          <Label>Slug</Label>
+          <p className="text-sm font-mono text-muted-foreground bg-muted px-3 py-2 rounded-md">
+            {ngo.slug}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Slug cannot be changed after creation.
+          </p>
+        </div>
+      )}
 
       {/* Telegram Bot Token */}
       <div className="space-y-1.5">

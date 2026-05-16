@@ -59,3 +59,19 @@ class PaginatedStaff(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class StaffProfile(BaseModel):
+    """JWT-authenticated staff member's full profile, including NGO context."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    telegram_username: Optional[str] = None
+    role: str
+    ngo_id: uuid.UUID
+    ngo_name: str
+    ngo_slug: str
+    allowed_agents: list[str]
+    email: Optional[str] = None

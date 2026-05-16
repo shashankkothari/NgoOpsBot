@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -40,12 +39,13 @@ export default function LoginPage() {
 
   const onSubmit = async (data: LoginFormValues) => {
     try {
-      const result = await signIn("credentials", {
-        apiKey: data.apiKey,
-        redirect: false,
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: data.apiKey }),
       });
 
-      if (result?.error) {
+      if (!res.ok) {
         toast({
           title: "Authentication failed",
           description: "Invalid API key. Please check your credentials.",
